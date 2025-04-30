@@ -1,0 +1,149 @@
+plugin for currancy change in wordpress
+
+
+<?php
+/**
+ * Plugin Name: Currency Switcher
+ * Description: A plugin to switch currencies between USD and INR with admin-configurable conversion rates.
+ * Version:     1.0
+ * Author:      Bhagwan singh
+ * License:     GPL2
+ */
+
+// Exit if accessed directly
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+// Add settings for currency conversion rate
+function cs_register_settings() {
+    add_option('cs_conversion_rate', 85);  // Default conversion rate
+    register_setting('currency_switcher_options_group', 'cs_conversion_rate');
+}
+add_action('admin_init', 'cs_register_settings');
+
+// Add settings page to Admin
+function cs_settings_page() {
+    ?>
+    <div class="wrap">
+        <h1>Currency Switcher Settings</h1>
+        <form method="post" action="options.php">
+            <?php settings_fields('currency_switcher_options_group'); ?>
+            <table class="form-table">
+                <tr valign="top">
+                    <th scope="row">Conversion Rate (USD to INR)</th>
+                    <td><input type="number" name="cs_conversion_rate" value="<?php echo get_option('cs_conversion_rate'); ?>" /></td>
+                </tr>
+            </table>
+            <?php submit_button(); ?>
+        </form>
+    </div>
+    <?php
+}
+
+// Add settings link in the admin menu
+function cs_add_settings_link() {
+    add_options_page('Currency Switcher', 'Currency Switcher', 'manage_options', 'currency-switcher', 'cs_settings_page');
+}
+add_action('admin_menu', 'cs_add_settings_link');
+
+// Currency conversion rate function
+function get_usd_conversion_rate() {
+    $rate = get_option('cs_conversion_rate', 85);  // Default rate if not set
+    return $rate;
+}
+
+// Add currency switcher via shortcode
+add_shortcode('currency_selector', function() {
+    return '
+    <div id="currency-selector">
+        <label>Currency:</label>
+        <select id="currency-switch">
+            <option value="usd">$ USD</option>
+            <option value="inr">₹ INR</option>
+        </select>
+    </div>';
+});
+
+// Modify WooCommerce price display (treat stored price as USD)
+add_filter('woocommerce_get_price_html', function($price, $product) {
+    if (is_admin()) return $price;
+
+    $usd = floatval($product->get_price()); // Stored price is in USD
+    $inr = round($usd * get_usd_conversion_rate());
+
+    return "<span class='currency-toggle' data-usd='{$usd}' data-inr='{$inr}'>\$" . $usd . "</span>";
+}, 10, 2);
+
+// Inject inline JS + CSS
+add_action('wp_footer', function() {
+    ?>
+    <style>
+        #currency-selector {
+            margin: 20px 0;
+        }
+        #currency-selector label {
+            font-weight: bold;
+            margin-right: 5px;
+        }
+        .currency-toggle {
+            font-weight: bold;
+        }
+    </style>
+    <script>
+    document.addEventListener("DOMContentLoaded", function () {
+        function applyCurrencyToggle(to) {
+            // Product prices
+            document.querySelectorAll('.currency-toggle').forEach(span => {
+                const inr = span.getAttribute('data-inr');
+                const usd = span.getAttribute('data-usd');
+                if (to === 'inr') {
+                    span.innerText = '₹' + inr;
+                } else {
+                    span.innerText = '$' + usd;
+                }
+            });
+
+            // Cart prices
+            const rate = <?php echo get_usd_conversion_rate(); ?>; // Get PHP rate
+            document.querySelectorAll('.cart_item .product-price, .cart_item .product-subtotal, .order-total .amount, .cart-subtotal .amount, .shipping .amount').forEach(el => {
+                const originalText = el.getAttribute('data-original') || el.innerText;
+
+                if (!el.hasAttribute('data-original')) {
+                    el.setAttribute('data-original', originalText);
+                }
+
+                const clean = parseFloat(originalText.replace(/[^0-9.]/g, ''));
+                if (isNaN(clean)) return;
+
+                if (to === 'inr') {
+                    el.innerText = '₹' + Math.round(clean * rate);
+                } else {
+                    el.innerText = '$' + clean;
+                }
+            });
+        }
+
+        // Handle selector change
+        document.body.addEventListener('change', function (e) {
+            if (e.target.id === 'currency-switch') {
+                const to = e.target.value;
+                localStorage.setItem('selectedCurrency', to);
+                applyCurrencyToggle(to);
+            }
+        });
+
+        // Re-apply after variation selection
+        jQuery(document).on('found_variation', function () {
+            const to = localStorage.getItem('selectedCurrency') || 'usd';
+            setTimeout(() => applyCurrencyToggle(to), 100);
+        });
+
+        // Apply saved choice on load
+        const saved = localStorage.getItem('selectedCurrency') || 'usd';
+        const selector = document.getElementById('currency-switch');
+        if (selector) selector.value = saved;
+        applyCurrencyToggle(saved);
+    });
+    </script>
+    <?php
+});
+?>
