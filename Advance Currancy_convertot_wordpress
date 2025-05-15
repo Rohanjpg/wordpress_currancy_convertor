@@ -1,0 +1,98 @@
+<?php
+/**
+ * Plugin Name: Currency Switcher
+ * Description: A plugin to switch currencies between USD and INR with admin-configurable conversion rates.
+ * Version:     1.0
+ * Author:      Bhagwan singh
+ * License:     GPL2
+ */
+
+// Exit if accessed directly
+if ( ! defined( 'ABSPATH' ) ) exit;
+
+// Register settings for currency conversion rate, price zones, and enable/disable system
+function cs_register_settings() {
+    add_option('cs_conversion_rate', 85);  // Default conversion rate
+    add_option('cs_enable_usd', 1);  // Enable USD by default
+    add_option('cs_enable_inr', 1);  // Enable INR by default
+    add_option('cs_price_zones', json_encode([
+        ['slug' => 'inr', 'name' => 'Inr', 'countries' => ['India'], 'currency' => '₹', 'rate' => 85],
+        ['slug' => 'usa', 'name' => 'Usa', 'countries' => ['United States (US)'], 'currency' => '$', 'rate' => 1]
+    ]));
+    register_setting('currency_switcher_options_group', 'cs_conversion_rate');
+    register_setting('currency_switcher_options_group', 'cs_enable_usd');
+    register_setting('currency_switcher_options_group', 'cs_enable_inr');
+    register_setting('currency_switcher_options_group', 'cs_price_zones');
+}
+add_action('admin_init', 'cs_register_settings');
+
+// Convert price based on enabled currency
+function cs_convert_price($price) {
+    $enable_inr = get_option('cs_enable_inr');
+    $conversion_rate = get_option('cs_conversion_rate');
+    if ($enable_inr) {
+        $usd = floatval($price);
+        $inr = round($usd * $conversion_rate);
+        return wc_price($inr, array('currency' => 'INR'));
+    }
+    return wc_price($price, array('currency' => 'USD'));
+}
+
+// Apply conversion on WooCommerce product prices
+add_filter('woocommerce_get_price_html', function($price, $product) {
+    return cs_convert_price($product->get_price());
+}, 10, 2);
+
+// Apply conversion on WooCommerce cart and checkout prices
+add_filter('woocommerce_cart_item_price', function($price, $cart_item, $cart_item_key) {
+    return cs_convert_price($cart_item['data']->get_price());
+}, 10, 3);
+
+add_filter('woocommerce_cart_item_subtotal', function($price, $cart_item, $cart_item_key) {
+    return cs_convert_price($cart_item['data']->get_price() * $cart_item['quantity']);
+}, 10, 3);
+
+add_filter('woocommerce_cart_total', function($total) {
+    $cart = WC()->cart;
+    $total = $cart->get_total('');
+    $raw_total = floatval(strip_tags($total));
+    return cs_convert_price($raw_total);
+});
+
+// Add settings link in the admin menu
+function cs_add_settings_link() {
+    add_options_page('Currency Switcher', 'Currency Switcher', 'manage_options', 'currency-switcher', 'cs_settings_page');
+}
+add_action('admin_menu', 'cs_add_settings_link');
+
+// Add settings page to Admin
+function cs_settings_page() {
+    $zones = json_decode(get_option('cs_price_zones'), true);
+    ?>
+    <div class="wrap">
+        <h1>Currency Switcher Settings</h1>
+        <form method="post" action="options.php">
+            <?php settings_fields('currency_switcher_options_group'); ?>
+            <h2>Enable/Disable Currencies</h2>
+            <label>Enable USD: <input type="checkbox" name="cs_enable_usd" value="1" <?php checked(1, get_option('cs_enable_usd'), true); ?>></label><br>
+            <label>Enable INR: <input type="checkbox" name="cs_enable_inr" value="1" <?php checked(1, get_option('cs_enable_inr'), true); ?>></label>
+            <h2>Conversion Rate (USD to INR)</h2>
+            <input type="number" name="cs_conversion_rate" value="<?php echo get_option('cs_conversion_rate'); ?>" />
+            <h2>Price Zones</h2>
+            <table class="form-table">
+                <tr><th>Zone Name</th><th>Countries</th><th>Currency</th><th>Rate</th></tr>
+                <?php foreach ($zones as $zone): ?>
+                <tr>
+                    <td><?php echo $zone['name']; ?></td>
+                    <td><?php echo implode(', ', $zone['countries']); ?></td>
+                    <td><?php echo $zone['currency']; ?></td>
+                    <td>1 USD = <?php echo $zone['rate'] . ' ' . $zone['currency']; ?></td>
+                </tr>
+                <?php endforeach; ?>
+            </table>
+            <?php submit_button(); ?>
+        </form>
+    </div>
+    <?php
+}
+?>
